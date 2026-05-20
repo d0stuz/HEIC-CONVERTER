@@ -1,5 +1,5 @@
 HEIC Converter
-HEIC Converter is a free, open-source tool that lets you quickly and easily convert .HEIC images from Apple devices (iPhone/iPad) to JPG, PNG, or WebP format on Windows.
+HEIC Converter is a free, open-source tool that lets you quickly and easily convert .HEIC images to JPG, PNG, or WebP format on Windows.
 
 🚀 Features
 Batch Conversion: Convert hundreds of files with a single click.
