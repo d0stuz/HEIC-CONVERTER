@@ -1,0 +1,619 @@
+"""
+HEIC Converter — Batch HEIC → JPG/PNG/WEBP dönüştürücü
+Gereksinimler: pip install pillow pillow-heif
+"""
+
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+import threading
+import os
+import glob
+import time
+from PIL import Image, ImageOps
+import pillow_heif
+
+# PyInstaller için gerekli
+pillow_heif.register_heif_opener()
+
+# ── Renk paleti ────────────────────────────────────────────────────────────────
+BG       = "#0f1117"
+SURFACE  = "#1a1d27"
+CARD     = "#21242f"
+BORDER   = "#2e3245"
+ACCENT   = "#5b6af0"
+ACCENT2  = "#7c8cf8"
+SUCCESS  = "#3ecf8e"
+WARNING  = "#f0a05b"
+ERROR    = "#f05b5b"
+TEXT     = "#e8eaf6"
+MUTED    = "#6b7194"
+WHITE    = "#ffffff"
+
+FONT_H1    = ("Segoe UI", 18, "bold")
+FONT_H2    = ("Segoe UI", 11, "bold")
+FONT_BODY  = ("Segoe UI", 10)
+FONT_SMALL = ("Segoe UI", 9)
+FONT_MONO  = ("Consolas", 9)
+
+# ── Çeviriler (TR / EN) ────────────────────────────────────────────────────────
+LANG = {
+    "tr": {
+        "app_title": "⬡  HEIC Converter",
+        "app_sub": "v1.2  •  toplu · boyutlandır · webp destekli",
+        "sec_src": "📂  Kaynak",
+        "folder": "  Klasör  ",
+        "files": "  Dosyalar  ",
+        "lbl_src_folder": "Kaynak Klasör",
+        "lbl_src_files": "Kaynak Dosyalar",
+        "sec_dest": "📁  Hedef",
+        "lbl_dest_folder": "Hedef Klasör",
+        "save_same": "Kaynak klasöre kaydet",
+        "open_folder": "İşlem bitince klasörü aç",
+        "sec_fmt": "🖼️  Çıktı Formatı",
+        "quality_lbl": "Kalite:",
+        "webp_lossless": "Kayıpsız Sıkıştırma (Lossless)",
+        "webp_trans": "Şeffaf Pikseller:",
+        "trans_keep": "Şeffaflığı Koru",
+        "trans_blend": "Arkaplanla Karıştır",
+        "trans_opaque": "Opak Yap",
+        "color_white": "Beyaz",
+        "color_black": "Siyah",
+        "sec_resize": "📐  Boyutlandırma",
+        "res_none": "  Değiştirme  ",
+        "res_pct": "  % Ölçek     ",
+        "res_max": "  Maks. Kenar ",
+        "scale": "Ölçek:",
+        "max_edge": "Maks. Kenar (px):",
+        "px_info": "px  (en uzun kenar orantılı küçülür)",
+        "btn_convert": "▶   Dönüştür",
+        "btn_processing": "⏳  İşleniyor…",
+        "status_ready": "Hazır",
+        "sec_log": "📋  İşlem Günlüğü",
+        "warn_no_src": "Kaynak HEIC dosya bulunamadı.",
+        "warn_no_dest": "Lütfen hedef klasörü seçin.",
+        "msg_done": "Tamamlandı",
+        "msg_success": "başarılı",
+        "msg_err": "hatalı",
+        "btn_pick": "  Seç  ",
+        "lang_btn": "🌐 English"
+    },
+    "en": {
+        "app_title": "⬡  HEIC Converter",
+        "app_sub": "v1.2  •  batch · resize · webp export",
+        "sec_src": "📂  Source",
+        "folder": "  Folder  ",
+        "files": "  Files  ",
+        "lbl_src_folder": "Source Folder",
+        "lbl_src_files": "Source Files",
+        "sec_dest": "📁  Destination",
+        "lbl_dest_folder": "Dest. Folder",
+        "save_same": "Save to source folder",
+        "open_folder": "Open folder when done",
+        "sec_fmt": "🖼️  Output Format",
+        "quality_lbl": "Quality:",
+        "webp_lossless": "Lossless Compression",
+        "webp_trans": "Transparent pixels:",
+        "trans_keep": "Keep transparency",
+        "trans_blend": "Blend with background",
+        "trans_opaque": "Set opaque",
+        "color_white": "White",
+        "color_black": "Black",
+        "sec_resize": "📐  Resizing",
+        "res_none": "  None  ",
+        "res_pct": "  % Scale     ",
+        "res_max": "  Max Edge    ",
+        "scale": "Scale:",
+        "max_edge": "Max Edge (px):",
+        "px_info": "px  (longest edge scales proportionally)",
+        "btn_convert": "▶   Convert",
+        "btn_processing": "⏳  Processing…",
+        "status_ready": "Ready",
+        "sec_log": "📋  Operation Log",
+        "warn_no_src": "No source HEIC files found.",
+        "warn_no_dest": "Please select a destination folder.",
+        "msg_done": "Completed",
+        "msg_success": "successful",
+        "msg_err": "failed",
+        "btn_pick": "  Select  ",
+        "lang_btn": "🌐 Türkçe"
+    }
+}
+
+# ── Yardımcı widget'lar ────────────────────────────────────────────────────────
+class HoverButton(tk.Button):
+    def __init__(self, master, bg_normal, bg_hover, **kw):
+        super().__init__(master, bg=bg_normal, activebackground=bg_hover,
+                         relief="flat", cursor="hand2", **kw)
+        self._bg_normal = bg_normal
+        self._bg_hover  = bg_hover
+        self.bind("<Enter>", lambda e: self.config(bg=bg_hover) if self['state'] != 'disabled' else None)
+        self.bind("<Leave>", lambda e: self.config(bg=bg_normal))
+
+class Section(tk.Frame):
+    def __init__(self, master, title, **kw):
+        super().__init__(master, bg=CARD, bd=0, **kw)
+        self.config(highlightbackground=BORDER, highlightthickness=1)
+        header = tk.Frame(self, bg=SURFACE, pady=8)
+        header.pack(fill="x")
+        tk.Label(header, text=title, font=FONT_H2, fg=ACCENT2,
+                 bg=SURFACE, padx=16).pack(side="left")
+        self.body = tk.Frame(self, bg=CARD, padx=16, pady=12)
+        self.body.pack(fill="both", expand=True)
+
+class PathRow(tk.Frame):
+    def __init__(self, master, label, btn_text, mode="dir", **kw):
+        super().__init__(master, bg=CARD, **kw)
+        self._mode = mode
+        tk.Label(self, text=label, font=FONT_SMALL, fg=MUTED,
+                 bg=CARD, width=14, anchor="w").pack(side="left")
+        self.var = tk.StringVar()
+        entry = tk.Entry(self, textvariable=self.var, font=FONT_MONO,
+                         bg=SURFACE, fg=TEXT, insertbackground=TEXT,
+                         relief="flat", bd=6, highlightthickness=1,
+                         highlightbackground=BORDER,
+                         highlightcolor=ACCENT)
+        entry.pack(side="left", fill="x", expand=True)
+        HoverButton(self, bg_normal=BORDER, bg_hover=ACCENT,
+                    text=btn_text, font=FONT_SMALL, fg=WHITE,
+                    command=self._pick).pack(side="left", padx=(6, 0))
+
+    def _pick(self):
+        if self._mode == "dir":
+            p = filedialog.askdirectory()
+        elif self._mode == "files":
+            p = filedialog.askopenfilenames(
+                filetypes=[("HEIC files", "*.heic *.HEIC *.heif *.HEIF"),
+                           ("All files", "*.*")])
+            p = ";".join(p) if p else ""
+        if p:
+            self.var.set(p)
+
+    def get(self):
+        return self.var.get()
+
+# ── Ana uygulama ───────────────────────────────────────────────────────────────
+class App(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("HEIC Converter")
+        self.geometry("740x900")
+        self.minsize(680, 800)
+        self.configure(bg=BG)
+        self._running = False
+        self.current_lang = "tr"
+        
+        # Arayüz değerlerini saklamak için
+        self.saved_mode = "folder"
+        self.saved_fmt = "webp"
+        self.saved_resize = "none"
+        self.saved_same = False
+        self.saved_open = True
+        self.saved_q = 85
+        self.saved_pct = 75
+        self.saved_dim = 1920
+        self.saved_webp_lossless = False
+        self.saved_trans_mode = "keep"
+        self.saved_blend_color = "white"
+        
+        self.main_container = tk.Frame(self, bg=BG)
+        self.main_container.pack(fill="both", expand=True)
+        
+        self._build_ui()
+
+    def t(self, key):
+        return LANG[self.current_lang][key]
+
+    def _toggle_lang(self):
+        self.saved_mode = self.mode_var.get()
+        self.saved_fmt = self.fmt_var.get()
+        self.saved_resize = self.resize_var.get()
+        self.saved_same = self.same_var.get()
+        self.saved_open = self.open_var.get()
+        self.saved_q = self.quality_var.get()
+        self.saved_pct = self.pct_var.get()
+        self.saved_dim = self.dim_var.get()
+        self.saved_webp_lossless = self.lossless_var.get()
+        self.saved_trans_mode = self.trans_var.get()
+        
+        # Seçili rengi dilden bağımsız sakla
+        if self.blend_cb.get() == self.t("color_black"):
+            self.saved_blend_color = "black"
+        else:
+            self.saved_blend_color = "white"
+
+        self.current_lang = "en" if self.current_lang == "tr" else "tr"
+        
+        for widget in self.main_container.winfo_children():
+            widget.destroy()
+        self._build_ui()
+
+    def _build_ui(self):
+        # ── Başlık ──
+        header = tk.Frame(self.main_container, bg=SURFACE, pady=18)
+        header.pack(fill="x")
+        
+        title_frame = tk.Frame(header, bg=SURFACE)
+        title_frame.pack(side="left", padx=24)
+        tk.Label(title_frame, text=self.t("app_title"), font=FONT_H1, fg=WHITE, bg=SURFACE).pack(anchor="w")
+        tk.Label(title_frame, text=self.t("app_sub"), font=FONT_SMALL, fg=MUTED, bg=SURFACE).pack(anchor="w")
+
+        HoverButton(header, bg_normal=CARD, bg_hover=BORDER, text=self.t("lang_btn"), 
+                    font=FONT_SMALL, fg=TEXT, command=self._toggle_lang).pack(side="right", padx=24)
+
+        scroll_frame = tk.Frame(self.main_container, bg=BG)
+        scroll_frame.pack(fill="both", expand=True, padx=16, pady=12)
+
+        # ── Mod seçimi ──
+        mode_sec = Section(scroll_frame, self.t("sec_src"))
+        mode_sec.pack(fill="x", pady=(0, 10))
+
+        self.mode_var = tk.StringVar(value=self.saved_mode)
+        mrow = tk.Frame(mode_sec.body, bg=CARD)
+        mrow.pack(fill="x", pady=(0, 8))
+        for val, lbl_key in (("folder", "folder"), ("files", "files")):
+            tk.Radiobutton(mrow, text=self.t(lbl_key), variable=self.mode_var, value=val,
+                           bg=CARD, fg=TEXT, selectcolor=ACCENT, activebackground=CARD, 
+                           activeforeground=TEXT, font=FONT_BODY, command=self._on_mode_change
+                           ).pack(side="left", padx=(0, 8))
+
+        self.folder_row = PathRow(mode_sec.body, self.t("lbl_src_folder"), self.t("btn_pick"), mode="dir")
+        self.folder_row.pack(fill="x", pady=2)
+        self.files_row  = PathRow(mode_sec.body, self.t("lbl_src_files"), self.t("btn_pick"), mode="files")
+        self.files_row.pack(fill="x", pady=2)
+        if self.saved_mode == "folder":
+            self.files_row.pack_forget()
+        else:
+            self.folder_row.pack_forget()
+
+        # ── Hedef ──
+        dest_sec = Section(scroll_frame, self.t("sec_dest"))
+        dest_sec.pack(fill="x", pady=(0, 10))
+        self.dest_row = PathRow(dest_sec.body, self.t("lbl_dest_folder"), self.t("btn_pick"), mode="dir")
+        self.dest_row.pack(fill="x")
+        
+        self.same_var = tk.BooleanVar(value=self.saved_same)
+        tk.Checkbutton(dest_sec.body, text=self.t("save_same"), variable=self.same_var, bg=CARD, fg=MUTED,
+                       selectcolor=SURFACE, activebackground=CARD, activeforeground=TEXT, 
+                       font=FONT_SMALL, command=self._on_same_toggle).pack(anchor="w", pady=(4, 0))
+                       
+        self.open_var = tk.BooleanVar(value=self.saved_open)
+        tk.Checkbutton(dest_sec.body, text=self.t("open_folder"), variable=self.open_var, bg=CARD, fg=MUTED,
+                       selectcolor=SURFACE, activebackground=CARD, activeforeground=TEXT, 
+                       font=FONT_SMALL).pack(anchor="w", pady=(2, 0))
+
+        self._on_same_toggle()
+
+        # ── Format ──
+        fmt_sec = Section(scroll_frame, self.t("sec_fmt"))
+        fmt_sec.pack(fill="x", pady=(0, 10))
+        
+        self.fmt_var = tk.StringVar(value=self.saved_fmt)
+        frow = tk.Frame(fmt_sec.body, bg=CARD)
+        frow.pack(fill="x", pady=(0, 6))
+        for val, lbl in (("jpg", "  JPG  "), ("png", "  PNG  "), ("webp", "  WebP  ")):
+            tk.Radiobutton(frow, text=lbl, variable=self.fmt_var, value=val,
+                           bg=CARD, fg=TEXT, selectcolor=ACCENT, activebackground=CARD, 
+                           activeforeground=TEXT, font=FONT_BODY, command=self._on_fmt_change
+                           ).pack(side="left", padx=(0, 8))
+
+        # Genel Kalite Çubuğu (JPG ve WebP için)
+        self.quality_frame = tk.Frame(fmt_sec.body, bg=CARD)
+        self.quality_frame.pack(fill="x", pady=(4, 0))
+        tk.Label(self.quality_frame, text=self.t("quality_lbl"), font=FONT_SMALL, fg=MUTED, bg=CARD).pack(side="left")
+        
+        self.quality_var = tk.IntVar(value=self.saved_q)
+        self.quality_lbl = tk.Label(self.quality_frame, text=str(self.saved_q), font=("Segoe UI", 10, "bold"), fg=ACCENT2, bg=CARD, width=3)
+        self.quality_lbl.pack(side="right")
+        tk.Label(self.quality_frame, text="%", font=FONT_SMALL, fg=MUTED, bg=CARD).pack(side="right")
+        q_scale = ttk.Scale(self.quality_frame, from_=10, to=100, variable=self.quality_var, orient="horizontal", command=self._on_quality)
+        q_scale.pack(side="left", fill="x", expand=True, padx=(8, 4))
+        
+        # ── WebP Özel Ayarları ──
+        self.webp_frame = tk.Frame(fmt_sec.body, bg=SURFACE, highlightbackground=BORDER, highlightthickness=1, padx=8, pady=8)
+        
+        # Lossless
+        self.lossless_var = tk.BooleanVar(value=self.saved_webp_lossless)
+        tk.Checkbutton(self.webp_frame, text=self.t("webp_lossless"), variable=self.lossless_var, bg=SURFACE, fg=TEXT,
+                       selectcolor=CARD, activebackground=SURFACE, activeforeground=TEXT, font=FONT_BODY,
+                       command=self._on_lossless_change).pack(anchor="w")
+        
+        # Şeffaflık
+        trans_title_row = tk.Frame(self.webp_frame, bg=SURFACE)
+        trans_title_row.pack(fill="x", pady=(8, 4))
+        tk.Label(trans_title_row, text=self.t("webp_trans"), font=FONT_SMALL, fg=MUTED, bg=SURFACE).pack(side="left")
+
+        trans_row = tk.Frame(self.webp_frame, bg=SURFACE)
+        trans_row.pack(fill="x")
+        
+        self.trans_var = tk.StringVar(value=self.saved_trans_mode)
+        
+        # 1. Koru
+        tk.Radiobutton(trans_row, text=self.t("trans_keep"), variable=self.trans_var, value="keep",
+                       bg=SURFACE, fg=TEXT, selectcolor=ACCENT, activebackground=SURFACE, activeforeground=TEXT, 
+                       font=FONT_SMALL).pack(side="left", padx=(0, 10))
+        
+        # 2. Karıştır (ve Renk Seçimi)
+        blend_frame = tk.Frame(trans_row, bg=SURFACE)
+        blend_frame.pack(side="left", padx=(0, 10))
+        tk.Radiobutton(blend_frame, text=self.t("trans_blend"), variable=self.trans_var, value="blend",
+                       bg=SURFACE, fg=TEXT, selectcolor=ACCENT, activebackground=SURFACE, activeforeground=TEXT, 
+                       font=FONT_SMALL).pack(side="left")
+                       
+        colors = [self.t("color_white"), self.t("color_black")]
+        current_color = colors[0] if self.saved_blend_color == "white" else colors[1]
+        self.blend_cb = ttk.Combobox(blend_frame, values=colors, state="readonly", width=8, font=FONT_SMALL)
+        self.blend_cb.set(current_color)
+        self.blend_cb.pack(side="left", padx=(4, 0))
+        
+        # 3. Opak
+        tk.Radiobutton(trans_row, text=self.t("trans_opaque"), variable=self.trans_var, value="opaque",
+                       bg=SURFACE, fg=TEXT, selectcolor=ACCENT, activebackground=SURFACE, activeforeground=TEXT, 
+                       font=FONT_SMALL).pack(side="left")
+
+        self._on_fmt_change()
+
+        # ── Boyutlandırma ──
+        resize_sec = Section(scroll_frame, self.t("sec_resize"))
+        resize_sec.pack(fill="x", pady=(0, 10))
+
+        self.resize_var = tk.StringVar(value=self.saved_resize)
+        for val, lbl_key in (("none", "res_none"), ("percent", "res_pct"), ("maxdim", "res_max")):
+            tk.Radiobutton(resize_sec.body, text=self.t(lbl_key), variable=self.resize_var, value=val, 
+                           bg=CARD, fg=TEXT, selectcolor=ACCENT, activebackground=CARD, 
+                           activeforeground=TEXT, font=FONT_BODY, command=self._on_resize_change
+                           ).pack(side="left", padx=(0, 4))
+
+        self.resize_detail = tk.Frame(resize_sec.body, bg=CARD)
+        self.resize_detail.pack(fill="x", pady=(8, 0))
+
+        # % ölçek
+        self.pct_frame = tk.Frame(self.resize_detail, bg=CARD)
+        self.pct_var   = tk.IntVar(value=self.saved_pct)
+        self.pct_lbl   = tk.Label(self.pct_frame, text=str(self.saved_pct), font=("Segoe UI", 10, "bold"), fg=WARNING, bg=CARD, width=3)
+        tk.Label(self.pct_frame, text=self.t("scale"), font=FONT_SMALL, fg=MUTED, bg=CARD).pack(side="left")
+        pct_scale = ttk.Scale(self.pct_frame, from_=5, to=100, variable=self.pct_var, orient="horizontal", command=self._on_pct)
+        pct_scale.pack(side="left", fill="x", expand=True, padx=(8, 4))
+        self.pct_lbl.pack(side="left")
+        tk.Label(self.pct_frame, text="%", font=FONT_SMALL, fg=MUTED, bg=CARD).pack(side="left")
+
+        # maks kenar
+        self.dim_frame = tk.Frame(self.resize_detail, bg=CARD)
+        tk.Label(self.dim_frame, text=self.t("max_edge"), font=FONT_SMALL, fg=MUTED, bg=CARD).pack(side="left")
+        self.dim_var = tk.IntVar(value=self.saved_dim)
+        vcmd = (self.register(lambda v: v.isdigit() or v == ""), "%P")
+        tk.Entry(self.dim_frame, textvariable=self.dim_var, width=7, validate="key", validatecommand=vcmd,
+                 font=FONT_BODY, bg=SURFACE, fg=TEXT, insertbackground=TEXT, relief="flat", bd=6,
+                 highlightthickness=1, highlightbackground=BORDER, highlightcolor=ACCENT).pack(side="left", padx=(8, 0))
+        tk.Label(self.dim_frame, text=self.t("px_info"), font=FONT_SMALL, fg=MUTED, bg=CARD).pack(side="left", padx=4)
+
+        self._on_resize_change()
+
+        # ── Dönüştür butonu ──
+        btn_frame = tk.Frame(self.main_container, bg=BG, pady=4)
+        btn_frame.pack(fill="x", padx=16)
+        self.convert_btn = HoverButton(btn_frame, bg_normal=ACCENT, bg_hover=ACCENT2, text=self.t("btn_convert"),
+                                       font=("Segoe UI", 12, "bold"), fg=WHITE, pady=12, command=self._start)
+        self.convert_btn.pack(fill="x")
+
+        # ── İlerleme ──
+        prog_frame = tk.Frame(self.main_container, bg=BG, padx=16)
+        prog_frame.pack(fill="x", pady=(8, 0))
+        self.status_lbl = tk.Label(prog_frame, text=self.t("status_ready"), font=FONT_SMALL, fg=MUTED, bg=BG, anchor="w")
+        self.status_lbl.pack(fill="x")
+        style = ttk.Style()
+        style.theme_use("default")
+        style.configure("c.Horizontal.TProgressbar", troughcolor=SURFACE, background=ACCENT, bordercolor=BG, lightcolor=ACCENT, darkcolor=ACCENT)
+        self.progress = ttk.Progressbar(prog_frame, style="c.Horizontal.TProgressbar", orient="horizontal", length=200, mode="determinate")
+        self.progress.pack(fill="x", pady=(4, 0))
+
+        # ── Log ──
+        log_sec = Section(self.main_container, self.t("sec_log"))
+        log_sec.pack(fill="both", expand=True, padx=16, pady=(10, 16))
+        self.log_text = tk.Text(log_sec.body, font=FONT_MONO, bg=SURFACE, fg=TEXT, relief="flat", bd=0,
+                                state="disabled", wrap="none", highlightthickness=0)
+        sb = ttk.Scrollbar(log_sec.body, command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self.log_text.pack(fill="both", expand=True)
+        self.log_text.tag_config("ok", foreground=SUCCESS)
+        self.log_text.tag_config("err", foreground=ERROR)
+        self.log_text.tag_config("warn", foreground=WARNING)
+        self.log_text.tag_config("info", foreground=ACCENT2)
+
+    # ── UI yardımcıları ────────────────────────────────────────────────────────
+    def _on_mode_change(self):
+        if self.mode_var.get() == "folder":
+            self.files_row.pack_forget()
+            self.folder_row.pack(fill="x", pady=2)
+        else:
+            self.folder_row.pack_forget()
+            self.files_row.pack(fill="x", pady=2)
+
+    def _on_same_toggle(self):
+        if self.same_var.get():
+            self.dest_row.pack_forget()
+        else:
+            self.dest_row.pack(fill="x")
+
+    def _on_fmt_change(self):
+        fmt = self.fmt_var.get()
+        if fmt in ("jpg", "webp"):
+            self.quality_frame.pack(fill="x", pady=(4, 0))
+        else:
+            self.quality_frame.pack_forget()
+
+        if fmt == "webp":
+            self.webp_frame.pack(fill="x", pady=(10, 0))
+        else:
+            self.webp_frame.pack_forget()
+
+    def _on_lossless_change(self):
+        # Lossless seçildiğinde kalite çubuğunu görsel olarak bilgilendirme amaçlı disable edebiliriz.
+        pass
+
+    def _on_quality(self, v):
+        self.quality_lbl.config(text=str(int(float(v))))
+
+    def _on_pct(self, v):
+        self.pct_lbl.config(text=str(int(float(v))))
+
+    def _on_resize_change(self):
+        mode = self.resize_var.get()
+        self.pct_frame.pack_forget()
+        self.dim_frame.pack_forget()
+        if mode == "percent":
+            self.pct_frame.pack(fill="x")
+        elif mode == "maxdim":
+            self.dim_frame.pack(fill="x")
+
+    def _log(self, msg, tag=""):
+        ts = time.strftime("%H:%M:%S")
+        self.log_text.config(state="normal")
+        self.log_text.insert("end", f"[{ts}] {msg}\n", tag)
+        self.log_text.see("end")
+        self.log_text.config(state="disabled")
+
+    def _set_status(self, msg):
+        self.status_lbl.config(text=msg)
+
+    # ── Dönüştürme ─────────────────────────────────────────────────────────────
+    def _start(self):
+        if self._running: return
+        files = self._collect_files()
+        if not files:
+            messagebox.showwarning("Uyarı / Warning", self.t("warn_no_src"))
+            return
+        dest = self._resolve_dest(files)
+        if dest is None: return
+        
+        os.makedirs(dest, exist_ok=True)
+        settings = {
+            "fmt": self.fmt_var.get(), 
+            "quality": self.quality_var.get(),
+            "resize": self.resize_var.get(), 
+            "pct": self.pct_var.get() / 100.0,
+            "maxdim": self.dim_var.get(), 
+            "dest": dest,
+            "webp_lossless": self.lossless_var.get(),
+            "trans_mode": self.trans_var.get(),
+            "blend_color": "white" if self.blend_cb.get() == self.t("color_white") else "black"
+        }
+        
+        self._running = True
+        self.convert_btn.config(state="disabled", text=self.t("btn_processing"))
+        self.progress["value"] = 0
+        self.progress["maximum"] = len(files)
+        threading.Thread(target=self._run, args=(files, settings), daemon=True).start()
+
+    def _collect_files(self):
+        if self.mode_var.get() == "folder":
+            src = self.folder_row.get().strip()
+            if not src or not os.path.isdir(src): return []
+            files = []
+            for p in ["*.heic", "*.HEIC", "*.heif", "*.HEIF"]:
+                files.extend(glob.glob(os.path.join(src, p)))
+            return sorted(set(files))
+        else:
+            raw = self.files_row.get().strip()
+            return [f for f in raw.split(";") if os.path.isfile(f)] if raw else []
+
+    def _resolve_dest(self, files):
+        if self.same_var.get():
+            return os.path.dirname(files[0])
+        dest = self.dest_row.get().strip()
+        if not dest:
+            messagebox.showwarning("Uyarı / Warning", self.t("warn_no_dest"))
+            return None
+        return dest
+
+    def _run(self, files, s):
+        ok = err = 0
+        dest_folder = s["dest"]
+        for i, path in enumerate(files):
+            name = os.path.basename(path)
+            try:
+                img = Image.open(path)
+                try: img = ImageOps.exif_transpose(img)
+                except Exception: pass
+
+                if s["resize"] == "percent":
+                    w, h = int(img.width * s["pct"]), int(img.height * s["pct"])
+                    img = img.resize((w, h), Image.LANCZOS)
+                elif s["resize"] == "maxdim":
+                    maxd = s["maxdim"]
+                    if max(img.width, img.height) > maxd:
+                        img.thumbnail((maxd, maxd), Image.LANCZOS)
+
+                stem = os.path.splitext(name)[0]
+                ext = s["fmt"]
+                out_path = os.path.join(dest_folder, f"{stem}.{ext}")
+
+                save_kw = {}
+                
+                # Format Bazlı Kaydetme Seçenekleri
+                if s["fmt"] == "jpg":
+                    if img.mode in ("RGBA", "LA", "P"): img = img.convert("RGB")
+                    save_kw = {"quality": s["quality"], "optimize": True}
+                
+                elif s["fmt"] == "png":
+                    save_kw = {"optimize": True}
+                
+                elif s["fmt"] == "webp":
+                    # WebP Şeffaflık (Alpha) Ayarları
+                    if img.mode in ("RGBA", "LA", "P", "PA"):
+                        img = img.convert("RGBA")
+                        if s["trans_mode"] == "blend":
+                            c = (255, 255, 255) if s["blend_color"] == "white" else (0, 0, 0)
+                            bg = Image.new("RGBA", img.size, c)
+                            bg = Image.alpha_composite(bg, img)
+                            img = bg.convert("RGB") # Şeffaflık ezildi
+                        elif s["trans_mode"] == "opaque":
+                            bg = Image.new("RGBA", img.size, (0, 0, 0))
+                            bg = Image.alpha_composite(bg, img)
+                            img = bg.convert("RGB") # Siyahla doldurulup alfa atıldı
+                    
+                    save_kw = {
+                        "quality": s["quality"], 
+                        "lossless": s["webp_lossless"],
+                        "method": 4 # Optimum hız/boyut oranı
+                    }
+
+                img.save(out_path, **save_kw)
+                
+                orig_kb, new_kb = os.path.getsize(path) // 1024, os.path.getsize(out_path) // 1024
+                self.after(0, self._log, f"✔ {name}  ({orig_kb} KB → {new_kb} KB)", "ok")
+                ok += 1
+            except Exception as exc:
+                self.after(0, self._log, f"✘ {name}  — {exc}", "err")
+                err += 1
+
+            self.after(0, self._tick, i + 1, len(files), name)
+
+        self.after(0, self._finish, ok, err, dest_folder)
+
+    def _tick(self, done, total, name):
+        self.progress["value"] = done
+        pct = int(done / total * 100)
+        self._set_status(f"{done}/{total}  ({pct}%)  —  {name}")
+
+    def _finish(self, ok, err, dest_folder):
+        self._running = False
+        self.convert_btn.config(state="normal", text=self.t("btn_convert"))
+        msg = f"{self.t('msg_done')} — {ok} {self.t('msg_success')}"
+        if err: msg += f", {err} {self.t('msg_err')}"
+        
+        self._log("─" * 50, "info")
+        self._log(msg, "ok" if not err else "warn")
+        self._set_status(msg)
+        self.progress["value"] = self.progress["maximum"]
+        
+        if self.open_var.get() and os.path.exists(dest_folder):
+            try:
+                os.startfile(dest_folder)
+            except Exception as e:
+                self._log(f"Klasör açılamadı: {e}", "err")
+
+# ── Giriş noktası ──────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    app = App()
+    app.mainloop()
