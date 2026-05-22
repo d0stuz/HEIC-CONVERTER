@@ -1,6 +1,12 @@
 HEIC Converter
 HEIC Converter is a free, open-source tool that lets you quickly and easily convert .HEIC images to JPG, PNG, or WebP format on Windows.
 
+
+
+<img width="1920" height="1032" alt="596214568-674ec78e-d8d0-431c-b83c-6c58c92d2d05" src="https://github.com/user-attachments/assets/8074d897-dda1-4918-b5ff-b4bc4183e585" />
+
+
+
 🚀 Features
 Batch Conversion: Convert hundreds of files with a single click.
 
